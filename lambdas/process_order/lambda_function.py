@@ -1,10 +1,16 @@
 import os
+import time
+
 import boto3
 from botocore.exceptions import ClientError
 
+from observability.observability import log_event, emit_metric
+
 
 dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(os.environ.get("IDEMPOTENCY_TABLE", "orders-idempotency"))
+table = dynamodb.Table(
+    os.environ.get("IDEMPOTENCY_TABLE", "orders-idempotency")
+)
 
 
 def lambda_handler(event, context):
@@ -12,10 +18,35 @@ def lambda_handler(event, context):
     Processa um pedido garantindo idempotência.
     """
 
+    start_time = time.perf_counter()
     order_id = event.get("order_id")
 
     if not order_id:
+        log_event(
+            "ERROR",
+            "ProcessOrder",
+            "processing_failed",
+            status="ERROR",
+            extra={
+                "error": "order_id é obrigatório"
+            }
+        )
+
+        emit_metric(
+            "ProcessingFailures",
+            1,
+            service="ProcessOrder"
+        )
+
         raise ValueError("order_id é obrigatório")
+
+    log_event(
+        "INFO",
+        "ProcessOrder",
+        "order_processing_started",
+        order_id=order_id,
+        status="STARTED"
+    )
 
     try:
         response = table.get_item(
@@ -23,7 +54,31 @@ def lambda_handler(event, context):
         )
 
         if "Item" in response:
-            print(f"Pedido {order_id} já foi processado.")
+            duration_ms = (time.perf_counter() - start_time) * 1000
+
+            log_event(
+                "INFO",
+                "ProcessOrder",
+                "duplicate_order",
+                order_id=order_id,
+                status="DUPLICATE",
+                extra={
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+
+            emit_metric(
+                "DuplicateOrders",
+                1,
+                service="ProcessOrder"
+            )
+
+            emit_metric(
+                "ProcessingDuration",
+                duration_ms,
+                unit="Milliseconds",
+                service="ProcessOrder"
+            )
 
             return {
                 "processed": False,
@@ -32,7 +87,13 @@ def lambda_handler(event, context):
                 "message": "Pedido já processado"
             }
 
-        print(f"Processando pedido: {order_id}")
+        log_event(
+            "INFO",
+            "ProcessOrder",
+            "order_processing",
+            order_id=order_id,
+            status="PROCESSING"
+        )
 
         # Simula o processamento do pedido.
         result = {
@@ -49,8 +110,60 @@ def lambda_handler(event, context):
             }
         )
 
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        log_event(
+            "INFO",
+            "ProcessOrder",
+            "order_processed",
+            order_id=order_id,
+            status="COMPLETED",
+            extra={
+                "duration_ms": round(duration_ms, 2)
+            }
+        )
+
+        emit_metric(
+            "OrdersProcessed",
+            1,
+            service="ProcessOrder"
+        )
+
+        emit_metric(
+            "ProcessingDuration",
+            duration_ms,
+            unit="Milliseconds",
+            service="ProcessOrder"
+        )
+
         return result
 
     except ClientError as error:
-        print(f"Erro ao acessar o DynamoDB: {error}")
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        log_event(
+            "ERROR",
+            "ProcessOrder",
+            "dynamodb_error",
+            order_id=order_id,
+            status="ERROR",
+            extra={
+                "error": str(error),
+                "duration_ms": round(duration_ms, 2)
+            }
+        )
+
+        emit_metric(
+            "ProcessingFailures",
+            1,
+            service="ProcessOrder"
+        )
+
+        emit_metric(
+            "ProcessingDuration",
+            duration_ms,
+            unit="Milliseconds",
+            service="ProcessOrder"
+        )
+
         raise
