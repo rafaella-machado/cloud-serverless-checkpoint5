@@ -1,99 +1,411 @@
-# Checkpoint 4 - Serverless Order Processing Workflow
+# PUC Serverless IA — Checkpoint 5
 
-Projeto desenvolvido para o Checkpoint 4 da disciplina de **Serverless Computing e Arquiteturas Event-Driven**.
+Projeto desenvolvido para a pós-graduação em **DevOps & Cloud Platform Engineering com IA — PUC Minas**, utilizando serviços serverless da AWS.
 
-O projeto evolui uma aplicação serverless de processamento de pedidos para uma arquitetura orquestrada utilizando **AWS Lambda, AWS Step Functions, Amazon DynamoDB e Amazon SQS**, adicionando uma camada completa de **observabilidade com Amazon CloudWatch Logs e Amazon CloudWatch Metrics**.
+Este projeto evolui a arquitetura desenvolvida nos checkpoints anteriores, adicionando **observabilidade, testes automatizados e CI/CD**, com o objetivo de automatizar completamente o processo de integração e implantação das funções serverless.
 
-## Arquitetura
+---
 
-```text
-HTTP POST
-   |
-   v
-Function URL
-   |
-   v
-StartOrder Lambda
-   |
-   v
-AWS Step Functions
-   |
-   +--> ValidateOrder Lambda
-   |
-   +--> ProcessOrder Lambda
-   |        |
-   |        v
-   |    DynamoDB
-   |    Idempotency
-   |
-   +--> FinishOrder Lambda
-   |
-   v
-OrderCompleted
-```
+## 1. Objetivo
 
-### Tratamento de falhas
+O objetivo do Checkpoint 5 é implementar um pipeline de **CI/CD (Continuous Integration / Continuous Deployment)** capaz de executar automaticamente:
 
-```text
-Lambda Task
-   |
-   +--> Retry
-   |
-   +--> Catch
-         |
-         v
-      SendToDLQ
-         |
-         v
-      Amazon SQS
-      orders-dlq
-         |
-         v
-      OrderFailed
-```
+1. Integração do código no GitHub;
+2. Instalação das dependências;
+3. Execução dos testes automatizados;
+4. Build dos pacotes das funções Lambda;
+5. Autenticação segura na AWS;
+6. Deploy automático das funções Lambda.
 
-### Observabilidade
+Dessa forma, alterações realizadas no código e enviadas para a branch `master` podem passar pelo processo de validação e implantação de forma automatizada.
 
-```text
-Lambda Functions
-      |
-      +--------------------+
-      |                    |
-      v                    v
-CloudWatch Logs      CloudWatch Metrics
-Structured JSON            EMF
-      |                    |
-      +---------+----------+
-                |
-                v
-    Checkpoint4/OrderProcessing
-                |
-                v
-    CloudWatch Dashboard
+---
 
-AWS Step Functions
-        |
-        v
-CloudWatch State Logs
-```
+# 2. Arquitetura
 
-## Tecnologias
+A solução utiliza uma arquitetura baseada em serviços gerenciados e serverless da AWS.
+
+O fluxo principal de processamento de pedidos utiliza:
 
 * AWS Lambda
 * AWS Step Functions
 * Amazon DynamoDB
 * Amazon SQS
-* Amazon CloudWatch Logs
-* Amazon CloudWatch Metrics
-* AWS IAM
-* Python 3.12
-* pytest
-* Git/GitHub
+* Amazon SNS
+* Amazon CloudWatch
 
-## Estrutura do projeto
+Fluxo simplificado:
 
 ```text
-cloud-serverless-checkpoint4/
+                    ┌─────────────────────┐
+                    │    Start Order      │
+                    │    AWS Lambda       │
+                    └──────────┬──────────┘
+                               │
+                               v
+                    ┌─────────────────────┐
+                    │   Step Functions    │
+                    │  Order Processing    │
+                    └──────────┬──────────┘
+                               │
+                 ┌─────────────┴─────────────┐
+                 │                           │
+                 v                           v
+       ┌──────────────────┐        ┌──────────────────┐
+       │  Validate Order  │        │   Process Order  │
+       │    Lambda        │        │     Lambda       │
+       └────────┬─────────┘        └────────┬─────────┘
+                │                           │
+                └─────────────┬─────────────┘
+                              │
+                              v
+                    ┌─────────────────────┐
+                    │    Finish Order     │
+                    │       Lambda        │
+                    └──────────┬──────────┘
+                               │
+                               v
+                         OrderCompleted
+```
+
+Em situações de falha, o workflow possui tratamento de erro, retry e encaminhamento para uma fila DLQ:
+
+```text
+Lambda Failure
+      |
+      v
+   Retry
+      |
+      v
+   Catch
+      |
+      v
+ SendToDLQ
+      |
+      v
+ Amazon SQS
+      |
+      v
+ OrderFailed
+```
+
+---
+
+# 3. Funções Lambda
+
+O projeto utiliza quatro funções Lambda principais:
+
+| Função           | Responsabilidade                  |
+| ---------------- | --------------------------------- |
+| `start-order`    | Inicia o processamento do pedido  |
+| `validate-order` | Valida os dados recebidos         |
+| `process-order`  | Executa o processamento do pedido |
+| `finish-order`   | Finaliza o processamento          |
+
+Os códigos das funções estão organizados no diretório:
+
+```text
+lambdas/
+├── start_order/
+│   └── lambda_function.py
+├── validate_order/
+│   └── lambda_function.py
+├── process_order/
+│   └── lambda_function.py
+└── finish_order/
+    └── lambda_function.py
+```
+
+---
+
+# 4. Orquestração com AWS Step Functions
+
+O processamento das etapas é orquestrado utilizando **AWS Step Functions**.
+
+O workflow está armazenado no projeto em:
+
+```text
+workflow/order-processing-workflow.json
+```
+
+A utilização do Step Functions permite organizar o fluxo de execução, tratamento de erros, retries e encaminhamento para DLQ.
+
+---
+
+# 5. Idempotência
+
+O projeto utiliza o **Amazon DynamoDB** para controle de idempotência.
+
+A tabela utilizada é:
+
+```text
+orders-idempotency
+```
+
+Esse mecanismo permite identificar pedidos que já foram processados e evitar processamento duplicado.
+
+O cenário de processamento duplicado também possui testes automatizados.
+
+---
+
+# 6. Dead Letter Queue
+
+Para tratamento de falhas que não podem ser resolvidas após as tentativas configuradas, o workflow utiliza uma **Dead Letter Queue (DLQ)** baseada no Amazon SQS.
+
+A DLQ permite preservar as mensagens que falharam para posterior análise e tratamento.
+
+---
+
+# 7. Observabilidade
+
+A solução possui mecanismos de observabilidade utilizando **Amazon CloudWatch**.
+
+Os eventos das funções são registrados utilizando logs estruturados em JSON.
+
+As métricas são publicadas utilizando **Embedded Metric Format (EMF)**.
+
+Namespace utilizado:
+
+```text
+Checkpoint4/OrderProcessing
+```
+
+Dashboard:
+
+```text
+Checkpoint4-OrderProcessing
+```
+
+Entre os indicadores acompanhados estão:
+
+* Execuções;
+* Erros;
+* Duplicidades;
+* Volume de pedidos;
+* Duração das operações.
+
+O código relacionado à observabilidade está localizado em:
+
+```text
+observability/
+└── observability.py
+```
+
+---
+
+# 8. Testes automatizados
+
+O projeto possui testes automatizados utilizando **pytest**.
+
+Os testes estão localizados em:
+
+```text
+tests/test_lambdas.py
+```
+
+Os testes abrangem cenários como:
+
+* Validação de pedidos;
+* Pedidos válidos;
+* Pedidos inválidos;
+* Processamento;
+* Processamento duplicado;
+* Finalização;
+* Validação do workflow em JSON.
+
+A suíte atual possui **9 testes automatizados**.
+
+Execução local:
+
+```bash
+pytest -v
+```
+
+Resultado esperado:
+
+```text
+9 passed
+```
+
+---
+
+# 9. CI/CD — Checkpoint 5
+
+Nesta etapa foi implementado um pipeline de **Continuous Integration / Continuous Deployment** utilizando **GitHub Actions**.
+
+O workflow está localizado em:
+
+```text
+.github/workflows/deploy.yml
+```
+
+O pipeline é acionado automaticamente quando ocorre um `push` na branch:
+
+```text
+master
+```
+
+---
+
+## 9.1 Fluxo do pipeline
+
+```text
+Git Push
+   |
+   v
+GitHub Actions
+   |
+   v
+Checkout
+   |
+   v
+Python 3.12
+   |
+   v
+Install Dependencies
+   |
+   v
+Run Tests
+   |
+   v
+Build Lambda Packages
+   |
+   v
+AWS Authentication via OIDC
+   |
+   v
+Deploy AWS Lambda
+```
+
+---
+
+# 10. Etapa de Test
+
+O primeiro job do pipeline é responsável pela integração contínua.
+
+O job:
+
+1. Faz checkout do código;
+2. Configura Python 3.12;
+3. Instala as dependências;
+4. Executa os testes automatizados.
+
+Configuração utilizada:
+
+```text
+Python 3.12
+pytest
+```
+
+O job seguinte somente é executado após a conclusão bem-sucedida dos testes.
+
+Fluxo:
+
+```text
+Test
+  |
+  | sucesso
+  v
+Build and Deploy
+```
+
+---
+
+# 11. Build das funções Lambda
+
+Após a aprovação dos testes, o pipeline gera automaticamente os pacotes ZIP das quatro funções:
+
+```text
+start-order.zip
+validate-order.zip
+process-order.zip
+finish-order.zip
+```
+
+Cada pacote contém:
+
+```text
+lambda_function.py
+observability/
+└── observability.py
+```
+
+A construção dos pacotes é realizada automaticamente pelo GitHub Actions.
+
+Os arquivos ZIP são utilizados apenas durante o processo de build/deploy e não são versionados no Git devido à configuração do `.gitignore`.
+
+---
+
+# 12. Deploy automático
+
+Após o build, o pipeline executa o deploy das quatro funções Lambda utilizando a AWS CLI.
+
+Funções atualizadas:
+
+```text
+start-order
+validate-order
+process-order
+finish-order
+```
+
+O deploy utiliza:
+
+```text
+aws lambda update-function-code
+```
+
+Dessa forma, uma alteração no código enviada para a branch `master` pode ser automaticamente validada, empacotada e implantada na AWS.
+
+---
+
+# 13. Segurança — AWS OIDC
+
+Para evitar o armazenamento de Access Keys da AWS no GitHub, foi utilizada autenticação através de **OpenID Connect (OIDC)**.
+
+O fluxo de autenticação é:
+
+```text
+GitHub Actions
+      |
+      | OIDC
+      v
+GitHub OIDC Provider
+      |
+      v
+AWS IAM Role
+      |
+      v
+AWS Lambda
+```
+
+A GitHub Actions utiliza uma IAM Role específica para o projeto.
+
+A role possui permissões restritas às quatro funções Lambda utilizadas pelo pipeline.
+
+O identificador da role é armazenado no GitHub Actions como secret:
+
+```text
+AWS_ROLE_ARN
+```
+
+Nenhuma Access Key ou Secret Access Key da AWS é armazenada no código-fonte.
+
+Também não são versionados arquivos contendo credenciais ou informações sensíveis.
+
+---
+
+# 14. Estrutura do projeto
+
+A estrutura principal do repositório é:
+
+```text
+cloud-serverless-checkpoint5/
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+│
 ├── lambdas/
 │   ├── start_order/
 │   │   └── lambda_function.py
@@ -103,668 +415,119 @@ cloud-serverless-checkpoint4/
 │   │   └── lambda_function.py
 │   └── finish_order/
 │       └── lambda_function.py
+│
 ├── observability/
 │   ├── observability.py
 │   └── dashboard.json
+│
 ├── tests/
 │   └── test_lambdas.py
+│
 ├── workflow/
 │   └── order-processing-workflow.json
-├── process-response.json
-├── process-response-duplicate.json
+│
+├── requirements.txt
 ├── .gitignore
-├── README.md
-└── requirements.txt
+└── README.md
 ```
 
-## Fluxo de processamento
+---
 
-### 1. StartOrder
+# 15. Pipeline GitHub Actions
 
-A Lambda `start-order` recebe um pedido através de uma **Lambda Function URL** HTTP e inicia uma execução do AWS Step Functions.
-
-Exemplo de entrada:
-
-```json
-{
-  "order_id": "ORDER-001",
-  "customer": "Rafaella",
-  "amount": 100
-}
-```
-
-A função inicia a execução do workflow e retorna HTTP `202` juntamente com o ARN da execução do Step Functions.
-
-A Function URL foi validada em ambiente AWS e não é versionada no repositório.
-
-### 2. ValidateOrder
-
-A Lambda `validate-order` valida os dados básicos do pedido:
-
-* `order_id`
-* `customer`
-* `amount`
-* `amount` maior que zero
-
-Pedidos inválidos geram uma exceção e são direcionados para o tratamento de falhas do workflow.
-
-### 3. ProcessOrder
-
-A Lambda `process-order` realiza o processamento do pedido e utiliza o **Amazon DynamoDB** para garantir idempotência.
-
-A tabela utilizada é:
+O arquivo responsável pela automação é:
 
 ```text
-orders-idempotency
+.github/workflows/deploy.yml
 ```
 
-A chave de partição é:
+O pipeline possui dois jobs principais:
 
 ```text
-order_id
+┌─────────────┐
+│    Test     │
+└──────┬──────┘
+       │
+       │ sucesso
+       v
+┌─────────────────────┐
+│ Build and Deploy    │
+└─────────────────────┘
 ```
 
-Quando um pedido é processado pela primeira vez, seu `order_id` é registrado no DynamoDB.
+O segundo job possui uma dependência explícita do primeiro, garantindo que o deploy somente aconteça após a aprovação dos testes automatizados.
 
-Quando o mesmo `order_id` é processado novamente, a função identifica o pedido como duplicado e não realiza um novo processamento.
+---
 
-Exemplo de resultado para um pedido duplicado:
+# 16. Evidência da execução do CI/CD
 
-```json
-{
-  "processed": false,
-  "duplicate": true,
-  "order_id": "ORDER-001",
-  "message": "Pedido já processado"
-}
-```
+A execução do pipeline pode ser acompanhada na seção **Actions** do repositório GitHub.
 
-### 4. FinishOrder
-
-A Lambda `finish-order` finaliza o processamento e retorna o status do pedido.
-
-Exemplo:
-
-```json
-{
-  "order_id": "ORDER-001",
-  "status": "SUCCESS",
-  "processed": true,
-  "duplicate": false,
-  "message": "Pedido ORDER-001 finalizado com sucesso."
-}
-```
-
-## Orquestração com AWS Step Functions
-
-O AWS Step Functions é responsável por controlar a ordem de execução das funções:
+Repositório:
 
 ```text
-ValidateOrder
-      |
-      v
-ProcessOrder
-      |
-      v
-FinishOrder
-      |
-      v
-OrderCompleted
+https://github.com/rafaella-machado/cloud-serverless-checkpoint5
 ```
 
-Cada etapa recebe a saída da etapa anterior, permitindo que o processamento seja realizado de forma organizada e controlada.
-
-Em caso de erro, o workflow utiliza `Catch` para direcionar a execução para o fluxo de tratamento de falhas.
-
-O fluxo de falha utiliza a etapa `SendToDLQ`, responsável pelo envio da mensagem para a fila SQS `orders-dlq`.
-
-## Retry
-
-As tarefas Lambda do Step Functions possuem política de retry para erros transitórios da infraestrutura AWS.
-
-São considerados:
-
-* `Lambda.ServiceException`
-* `Lambda.AWSLambdaException`
-* `Lambda.SdkClientException`
-
-Configuração utilizada:
+Workflow:
 
 ```text
-IntervalSeconds: 2
-MaxAttempts: 3
-BackoffRate: 2
+CI/CD - Deploy Lambdas
 ```
 
-Erros de validação, como um valor negativo para `amount`, não são tratados como erros transitórios e seguem para o fluxo de falha.
+Para comprovação acadêmica, devem ser registradas evidências da execução contendo:
 
-## Dead-Letter Queue
+* Execução do job `Test`;
+* Resultado dos testes;
+* Execução do job `Build and Deploy`;
+* Build dos pacotes Lambda;
+* Autenticação AWS;
+* Deploy das funções Lambda;
+* Resultado final da execução.
 
-O workflow possui tratamento de falhas utilizando **Amazon SQS**.
+### Registro da execução
 
-Quando uma tarefa falha e não consegue ser concluída após as tentativas configuradas, o `Catch` direciona a execução para a etapa `SendToDLQ`.
+> **Status:** a ser preenchido após a execução bem-sucedida do pipeline.
 
 ```text
-Catch
-  |
-  v
-SendToDLQ
-  |
-  v
-orders-dlq
-  |
-  v
-OrderFailed
-```
-
-A mensagem enviada para a DLQ contém os dados do pedido e as informações relacionadas ao erro.
-
-## Idempotência
-
-A idempotência é implementada na Lambda `process-order` utilizando o Amazon DynamoDB.
-
-Quando um pedido é processado pela primeira vez, seu `order_id` é armazenado na tabela.
-
-Quando o mesmo pedido é enviado novamente, o sistema identifica que o `order_id` já existe e evita um novo processamento.
-
-Exemplo:
-
-```text
-Primeira execução:
-ORDER-001
-processed = true
-duplicate = false
-
-Segunda execução:
-ORDER-001
-processed = false
-duplicate = true
-```
-
-O resultado da segunda execução está registrado em:
-
-```text
-process-response-duplicate.json
-```
-
-O resultado de processamento normal está registrado em:
-
-```text
-process-response.json
-```
-
-# Observabilidade
-
-O Checkpoint 4 adiciona observabilidade ao fluxo de processamento utilizando recursos nativos da AWS, principalmente **Amazon CloudWatch Logs** e **Amazon CloudWatch Metrics**.
-
-A instrumentação foi aplicada às quatro funções Lambda:
-
-* `StartOrder`
-* `ValidateOrder`
-* `ProcessOrder`
-* `FinishOrder`
-
-Também foi habilitado o logging do **AWS Step Functions** para registrar os eventos de execução do workflow.
-
-## Logs estruturados
-
-As Lambdas utilizam logs estruturados em JSON, contendo informações como:
-
-* `timestamp`
-* `level`
-* `service`
-* `event`
-* `order_id`
-* `status`
-* `details`
-
-Exemplo:
-
-```json
-{
-  "timestamp": "2026-09-11T01:25:06.009668+00:00",
-  "level": "INFO",
-  "service": "ProcessOrder",
-  "event": "order_processed",
-  "order_id": "ORDER-004",
-  "status": "COMPLETED",
-  "details": {
-    "duration_ms": 59.31
-  }
-}
-```
-
-Os grupos de logs das funções estão disponíveis no CloudWatch:
-
-```text
-/aws/lambda/start-order
-/aws/lambda/validate-order
-/aws/lambda/process-order
-/aws/lambda/finish-order
-```
-
-As funções Lambda também estão configuradas para utilizar formato de logging JSON no CloudWatch.
-
-## Módulo de observabilidade
-
-A lógica comum de logging e métricas foi centralizada em:
-
-```text
-observability/observability.py
-```
-
-O módulo disponibiliza as funções:
-
-```text
-log_event()
-emit_metric()
-```
-
-A função `log_event()` gera eventos estruturados em JSON.
-
-A função `emit_metric()` utiliza **Embedded Metric Format (EMF)** para publicar métricas customizadas no CloudWatch.
-
-O namespace utilizado é:
-
-```text
-Checkpoint4/OrderProcessing
-```
-
-## Métricas customizadas
-
-As funções emitem métricas utilizando **Embedded Metric Format (EMF)**.
-
-Métricas implementadas:
-
-| Métrica              | Serviço       | Finalidade                        |
-| -------------------- | ------------- | --------------------------------- |
-| `OrdersStarted`      | StartOrder    | Quantidade de pedidos iniciados   |
-| `OrdersValidated`    | ValidateOrder | Quantidade de pedidos validados   |
-| `OrdersProcessed`    | ProcessOrder  | Quantidade de pedidos processados |
-| `DuplicateOrders`    | ProcessOrder  | Quantidade de pedidos duplicados  |
-| `ProcessingDuration` | ProcessOrder  | Tempo de processamento            |
-| `OrdersFinished`     | FinishOrder   | Quantidade de pedidos finalizados |
-| `FinishDuration`     | FinishOrder   | Tempo de finalização              |
-
-As métricas foram verificadas no CloudWatch utilizando o namespace:
-
-```text
-Checkpoint4/OrderProcessing
-```
-
-## Dashboard do CloudWatch
-
-Foi criado um dashboard do CloudWatch chamado:
-
-```text
-Checkpoint4-OrderProcessing
-```
-
-O dashboard apresenta:
-
-* quantidade de pedidos iniciados;
-* quantidade de pedidos validados;
-* quantidade de pedidos processados;
-* quantidade de pedidos finalizados;
-* quantidade de pedidos duplicados;
-* duração média do processamento;
-* duração da etapa de finalização.
-
-O arquivo de configuração do dashboard está em:
-
-```text
-observability/dashboard.json
-```
-
-O dashboard foi publicado no CloudWatch com validação concluída sem erros.
-
-## Observabilidade do Step Functions
-
-O AWS Step Functions foi configurado para enviar logs para:
-
-```text
-/aws/vendedlogs/states/order-processing-workflow
-```
-
-O nível de logging utilizado foi:
-
-```text
-ALL
-```
-
-Com isso, é possível acompanhar eventos como:
-
-* `ExecutionStarted`
-* `TaskStateEntered`
-* `LambdaFunctionStarted`
-* `LambdaFunctionSucceeded`
-* `LambdaFunctionFailed`
-* `TaskSucceeded`
-* `ExecutionSucceeded`
-* `ExecutionFailed`
-
-Os logs permitem acompanhar o fluxo completo da execução e identificar em qual etapa ocorreu uma falha.
-
-# Evidências de execução
-
-## Processamento normal
-
-Foi executado um pedido utilizando:
-
-```text
-order_id: ORDER-004
-customer: Rafaella
-amount: 150
-```
-
-O workflow foi concluído com sucesso:
-
-```text
-ExecutionSucceeded
-```
+GitHub Actions Run:
+[INSERIR LINK DA EXECUÇÃO]
 
 Resultado:
-
-```json
-{
-  "order_id": "ORDER-004",
-  "status": "SUCCESS",
-  "processed": true,
-  "duplicate": false,
-  "message": "Pedido ORDER-004 finalizado com sucesso."
-}
+[INSERIR PRINT OU REFERÊNCIA DA EXECUÇÃO]
 ```
 
-Durante essa execução foram registrados eventos nas quatro Lambdas e no Step Functions.
+---
 
-A métrica `OrdersProcessed` também foi emitida pelo `ProcessOrder`.
+# 17. Conclusão
 
-A métrica `ProcessingDuration` registrou o tempo de processamento.
+Com a implementação do Checkpoint 5, o projeto evolui de uma arquitetura serverless com processamento, tratamento de falhas e observabilidade para uma solução que também possui **automação do ciclo de entrega**.
 
-## Idempotência
-
-Foi executado novamente um pedido já existente:
+O processo passa a seguir o fluxo:
 
 ```text
-order_id: ORDER-001
+Alteração no código
+       |
+       v
+Git Push
+       |
+       v
+GitHub Actions
+       |
+       v
+Testes automatizados
+       |
+       v
+Build
+       |
+       v
+Autenticação segura via OIDC
+       |
+       v
+Deploy automático
+       |
+       v
+AWS Lambda
 ```
 
-O sistema identificou a duplicidade através do DynamoDB.
-
-Resultado:
-
-```json
-{
-  "order_id": "ORDER-001",
-  "status": "SUCCESS",
-  "processed": false,
-  "duplicate": true,
-  "message": "Pedido ORDER-001 já havia sido processado."
-}
-```
-
-O `ProcessOrder` registrou o evento:
-
-```text
-duplicate_order
-```
-
-e emitiu a métrica:
-
-```text
-DuplicateOrders
-```
-
-Essa execução demonstrou o funcionamento da idempotência e da observabilidade do caminho de pedido duplicado.
-
-## Falha de validação e DLQ
-
-Foi executado um pedido inválido:
-
-```text
-order_id: ORDER-ERROR
-customer: Rafaella
-amount: -100
-```
-
-A validação gerou:
-
-```text
-ValueError
-amount deve ser um número maior que zero
-```
-
-O Step Functions registrou o fluxo de falha:
-
-```text
-ExecutionStarted
-      |
-      v
-ValidateOrder
-      |
-      v
-LambdaFunctionFailed
-      |
-      v
-SendToDLQ
-      |
-      v
-Amazon SQS
-orders-dlq
-      |
-      v
-OrderFailed
-      |
-      v
-ExecutionFailed
-```
-
-A mensagem foi enviada para a fila:
-
-```text
-orders-dlq
-```
-
-A execução terminou com:
-
-```text
-status: FAILED
-error: OrderProcessingFailed
-cause: Order processing failed after retries
-```
-
-Essa evidência demonstra o funcionamento conjunto de:
-
-* logs estruturados;
-* Step Functions;
-* tratamento de exceções;
-* Retry/Catch;
-* SQS Dead-Letter Queue;
-* observabilidade do fluxo de erro.
-
-# Evidências das métricas
-
-As métricas customizadas foram consultadas utilizando o namespace:
-
-```text
-Checkpoint4/OrderProcessing
-```
-
-Métricas confirmadas:
-
-```text
-FinishDuration
-OrdersFinished
-OrdersValidated
-DuplicateOrders
-ProcessingDuration
-OrdersStarted
-OrdersProcessed
-```
-
-Consulta utilizada:
-
-```bash
-aws cloudwatch list-metrics \
-  --namespace "Checkpoint4/OrderProcessing" \
-  --query 'Metrics[].MetricName' \
-  --output text
-```
-
-# Testes automatizados
-
-Os testes automatizados do projeto foram executados após a instrumentação de observabilidade.
-
-Resultado:
-
-```text
-9 passed in 0.05s
-```
-
-Comando utilizado:
-
-```bash
-python3 -m pytest -q
-```
-
-O resultado demonstra que a instrumentação de observabilidade não quebrou os testes existentes do Checkpoint 3.
-
-# Otimizações arquiteturais propostas
-
-## 1. Utilizar escrita condicional no DynamoDB
-
-Atualmente, o `ProcessOrder` realiza primeiro um `get_item` para verificar se o pedido existe e posteriormente um `put_item`.
-
-Uma otimização seria utilizar uma operação de escrita condicional com:
-
-```text
-ConditionExpression = attribute_not_exists(order_id)
-```
-
-Dessa forma, a existência do pedido seria validada atomicamente durante a própria escrita.
-
-Essa abordagem também evita uma janela de condição de corrida caso duas execuções do mesmo pedido ocorram simultaneamente.
-
-### Benefícios
-
-* menor quantidade de chamadas ao DynamoDB;
-* menor latência;
-* menor custo;
-* maior segurança em cenários concorrentes;
-* idempotência mais robusta.
-
-## 2. Substituir a Lambda FinishOrder por estado nativo do Step Functions
-
-A `FinishOrder` atualmente possui uma lógica relativamente simples de formatação do resultado final.
-
-Uma alternativa seria substituir essa Lambda por um estado nativo do Step Functions, como `Pass`, utilizando parâmetros e `ResultPath` para montar a saída final.
-
-### Benefícios
-
-* elimina uma invocação Lambda;
-* reduz possibilidade de cold start;
-* reduz custo;
-* simplifica a arquitetura;
-* diminui a quantidade de componentes que precisam ser monitorados;
-* reduz a superfície operacional da aplicação.
-
-## 3. Configurar retenção dos logs do CloudWatch
-
-Os grupos de logs podem receber uma política explícita de retenção.
-
-Para um ambiente acadêmico ou de testes, uma política de retenção de aproximadamente:
-
-```text
-14 dias
-```
-
-pode ser adequada.
-
-Isso evita manter logs indefinidamente e permite controlar o crescimento do armazenamento.
-
-### Benefícios
-
-* redução de custo;
-* controle do volume de logs;
-* política de retenção explícita;
-* menor acúmulo de dados desnecessários.
-
-# Segurança
-
-O projeto não contém chaves de acesso, senhas ou credenciais AWS.
-
-As permissões são controladas através de **AWS IAM Roles**.
-
-Não foram incluídos no repositório:
-
-* AWS Access Keys;
-* Secret Keys;
-* tokens;
-* senhas;
-* credenciais de serviços.
-
-A Function URL utilizada nos testes não é armazenada no README nem em arquivos versionados.
-
-# Conclusão
-
-O Checkpoint 4 evolui o workflow serverless do Checkpoint 3 adicionando uma camada completa de observabilidade.
-
-A solução permite acompanhar:
-
-```text
-Entrada do pedido
-      |
-      v
-StartOrder
-      |
-      v
-ValidateOrder
-      |
-      v
-ProcessOrder
-      |
-      +----> DynamoDB / Idempotência
-      |
-      v
-FinishOrder
-      |
-      v
-OrderCompleted
-```
-
-Em caso de falha:
-
-```text
-Lambda Failure
-      |
-      v
-Retry
-      |
-      v
-Catch
-      |
-      v
-SendToDLQ
-      |
-      v
-Amazon SQS
-      |
-      v
-OrderFailed
-```
-
-Os eventos das funções são registrados no CloudWatch Logs utilizando JSON estruturado.
-
-As métricas são publicadas através de Embedded Metric Format no namespace:
-
-```text
-Checkpoint4/OrderProcessing
-```
-
-Os principais indicadores são apresentados no dashboard:
-
-```text
-Checkpoint4-OrderProcessing
-```
-
-Dessa forma, a arquitetura passa a oferecer não apenas processamento serverless e tratamento de falhas, mas também mecanismos para acompanhar **execuções, erros, duplicidades, volume de pedidos e duração das operações**, permitindo uma análise mais efetiva da saúde do sistema.
+Essa abordagem reduz a necessidade de execução manual de comandos de deploy e estabelece uma base de **Continuous Integration e Continuous Deployment** para a aplicação serverless.
