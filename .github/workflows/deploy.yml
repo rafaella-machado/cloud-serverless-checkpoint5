@@ -1,0 +1,96 @@
+name: CI/CD - Deploy Lambdas
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -v
+
+  build-and-deploy:
+    name: Build and Deploy
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build Lambda packages
+        run: |
+          rm -rf build
+          mkdir -p build
+
+          for fn in start-order validate-order process-order finish-order; do
+            dir="${fn//-/_}"
+
+            mkdir -p "build/$fn/observability"
+
+            cp "lambdas/$dir/lambda_function.py" "build/$fn/"
+            cp "observability/observability.py" "build/$fn/observability/"
+
+            (
+              cd "build/$fn"
+              zip -qr "../../${fn}.zip" .
+            )
+          done
+
+      - name: Deploy start-order
+        run: |
+          aws lambda update-function-code \
+            --function-name start-order \
+            --zip-file fileb://start-order.zip
+
+      - name: Deploy validate-order
+        run: |
+          aws lambda update-function-code \
+            --function-name validate-order \
+            --zip-file fileb://validate-order.zip
+
+      - name: Deploy process-order
+        run: |
+          aws lambda update-function-code \
+            --function-name process-order \
+            --zip-file fileb://process-order.zip
+
+      - name: Deploy finish-order
+        run: |
+          aws lambda update-function-code \
+            --function-name finish-order \
+            --zip-file fileb://finish-order.zip
