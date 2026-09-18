@@ -487,14 +487,16 @@ Para comprovação acadêmica, devem ser registradas evidências da execução c
 
 ### Registro da execução
 
-> **Status:** a ser preenchido após a execução bem-sucedida do pipeline.
+> **Status:** execução concluída com sucesso.
 
 ```text
 GitHub Actions Run:
-[INSERIR LINK DA EXECUÇÃO]
+https://github.com/rafaella-machado/cloud-serverless-checkpoint5/actions/runs/35290586528
 
 Resultado:
-[INSERIR PRINT OU REFERÊNCIA DA EXECUÇÃO]
+Pipeline executado com sucesso, incluindo autenticação na AWS via OIDC,
+build dos pacotes e deploy automático das funções Lambda:
+start-order, validate-order, process-order e finish-order.
 ```
 
 ---
